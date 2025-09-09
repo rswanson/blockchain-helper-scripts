@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 # Default values
 DRY_RUN=false
 AMOUNT="0.01"
-RPC_URL="${RPC_URL:-https://host-rpc.pecorino.signet.sh}"
+RPC_URL="${RPC_URL:-https://rpc.pecorino.signet.sh}"
 DELAY_SECONDS=1
 GAS_PRICE=""
 PRIORITY_FEE=""
@@ -445,8 +445,8 @@ show_progress() {
     local filled=$((percent / 2))
     
     printf "\r["
-    printf "%0.s�" $(seq 1 $filled)
-    printf "%0.s�" $(seq $((filled + 1)) 50)
+    printf "%0.s=" $(seq 1 $filled)
+    printf "%0.s-" $(seq $((filled + 1)) 50)
     printf "] %d%% (%d/%d)" $percent $current $total
 }
 
