@@ -45,7 +45,7 @@ Options:
     -h, --help              Show this help message
 
 Note: Uses AWS for signing (via cast --aws)
-      Submits bundle for the next 2 blocks starting from latest
+      Submits bundle for blocks latest+2 through latest+5 (4 blocks ahead)
       If no transactions provided, generates one sending VALUE to yourself
       Requires TEMP_PRIVATE_KEY in .env file for transaction generation
 
@@ -299,50 +299,65 @@ for i in "${!TXS[@]}"; do
 done
 TX_JSON+="]"
 
-# Get the latest block number
+# Bundle targeting configuration
+# We target the next few blocks for inclusion
+# latest+1 is the immediate next block, latest+2 provides a backup
+BLOCK_OFFSET_START=1  # Start at latest + 1 (next block)
+BLOCK_OFFSET_END=2    # End at latest + 2 (backup block)
+NUM_BLOCKS=$((BLOCK_OFFSET_END - BLOCK_OFFSET_START + 1))
+
+# Refetch the latest block number right before submission to minimize timing drift
+# This is critical because transaction generation can take several seconds
+echo ""
 echo "Fetching latest block number from $RPC_URL..."
-LATEST_BLOCK_DEC=$(cast block latest --rpc-url "$RPC_URL" --json | jq -r '.number' | xargs printf "%d")
+LATEST_BLOCK_DEC=$(cast block-number --rpc-url "$RPC_URL")
 LATEST_BLOCK_HEX=$(printf "0x%x" "$LATEST_BLOCK_DEC")
+
+# Calculate target block range
+FIRST_TARGET=$((LATEST_BLOCK_DEC + BLOCK_OFFSET_START))
+LAST_TARGET=$((LATEST_BLOCK_DEC + BLOCK_OFFSET_END))
 
 echo "Builder URL: $BUILDER_URL"
 echo "RPC URL: $RPC_URL"
 echo "Latest block: $LATEST_BLOCK_HEX ($LATEST_BLOCK_DEC)"
 echo "Transactions: ${#TXS[@]}"
-echo "Submitting bundle for blocks $LATEST_BLOCK_HEX through $(printf "0x%x" $((LATEST_BLOCK_DEC + 1)))"
+echo "Targeting blocks: $(printf "0x%x" $FIRST_TARGET) ($FIRST_TARGET) through $(printf "0x%x" $LAST_TARGET) ($LAST_TARGET)"
+echo "  (${NUM_BLOCKS} blocks, ~$((NUM_BLOCKS * 12)) seconds coverage)"
 echo ""
 
-# Submit bundle for the next 2 blocks (to increase chances of inclusion)
-for i in {0..1}; do
+# Submit bundle for multiple future blocks to increase chances of inclusion
+# Starting from latest+2 ensures the builder has time to receive and process the bundle
+for i in $(seq $BLOCK_OFFSET_START $BLOCK_OFFSET_END); do
     TARGET_BLOCK_DEC=$((LATEST_BLOCK_DEC + i))
     TARGET_BLOCK_HEX=$(printf "0x%x" "$TARGET_BLOCK_DEC")
-    
-    echo "=== Block $TARGET_BLOCK_HEX ($TARGET_BLOCK_DEC) ==="
-    
+
+    echo "=== Block $TARGET_BLOCK_HEX ($TARGET_BLOCK_DEC) [latest+$i] ==="
+
     # Build the JSON-RPC request body for this block
     REQUEST_BODY=$(cat <<EOF
 {"jsonrpc":"2.0","id":1,"method":"eth_sendBundle","params":[{"txs":$TX_JSON,"blockNumber":"$TARGET_BLOCK_HEX"}]}
 EOF
     )
-    
+
     # Hash the request body (keccak256)
     BODY_HASH=$(cast keccak "$REQUEST_BODY")
-    
+
     # Sign the hash (Flashbots expects the hash to be signed, not the message)
     SIGNATURE=$(cast wallet sign --aws "$BODY_HASH" --no-hash)
-    
+
     # Build the X-Flashbots-Signature header
     FLASHBOTS_HEADER="$SIGNING_ADDRESS:$SIGNATURE"
-    
+
     # Send the request
     RESPONSE=$(curl -s -X POST \
         -H "Content-Type: application/json" \
         -H "X-Flashbots-Signature: $FLASHBOTS_HEADER" \
         -d "$REQUEST_BODY" \
         "$BUILDER_URL")
-    
+
     echo "Response:"
     echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
     echo ""
 done
 
-echo "✅ Submitted bundle for 2 blocks"
+echo "✅ Submitted bundle for $NUM_BLOCKS blocks (latest+$BLOCK_OFFSET_START through latest+$BLOCK_OFFSET_END)"
