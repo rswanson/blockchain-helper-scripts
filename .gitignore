@@ -1,2 +1,4 @@
 wallets*
 logs
+.env
+**/.env
